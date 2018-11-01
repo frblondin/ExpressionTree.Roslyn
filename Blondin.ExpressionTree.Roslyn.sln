@@ -1,0 +1,46 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28010.2048
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blondin.ExpressionTree.Roslyn", "src\Blondin.ExpressionTree.Roslyn\Blondin.ExpressionTree.Roslyn.csproj", "{83390A26-7849-4574-AD10-D8AD4F1061FE}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{BEE267EE-B1E1-437E-9C05-D7618C7DE5DB}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{F3ACADA9-CA5E-4E98-A6D5-D55D60519648}"
+	ProjectSection(SolutionItems) = preProject
+		.editorconfig = .editorconfig
+		.gitignore = .gitignore
+		LICENSE = LICENSE
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{9732EF8F-3414-4B78-88FB-DC4B29EB4FC5}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Blondin.ExpressionTree.Roslyn.Tests", "tests\Blondin.ExpressionTree.Roslyn.Tests\Blondin.ExpressionTree.Roslyn.Tests.csproj", "{89EED4A2-D000-42A8-B7D7-408B201F1BC7}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{83390A26-7849-4574-AD10-D8AD4F1061FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{83390A26-7849-4574-AD10-D8AD4F1061FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{83390A26-7849-4574-AD10-D8AD4F1061FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{83390A26-7849-4574-AD10-D8AD4F1061FE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{89EED4A2-D000-42A8-B7D7-408B201F1BC7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{89EED4A2-D000-42A8-B7D7-408B201F1BC7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{89EED4A2-D000-42A8-B7D7-408B201F1BC7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{89EED4A2-D000-42A8-B7D7-408B201F1BC7}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{83390A26-7849-4574-AD10-D8AD4F1061FE} = {BEE267EE-B1E1-437E-9C05-D7618C7DE5DB}
+		{89EED4A2-D000-42A8-B7D7-408B201F1BC7} = {9732EF8F-3414-4B78-88FB-DC4B29EB4FC5}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3E2DE021-F7C5-4968-89FE-3934B01FA325}
+	EndGlobalSection
+EndGlobal
