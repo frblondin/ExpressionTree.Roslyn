@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
-using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -12,10 +11,28 @@ namespace Blondin.ExpressionTree.Roslyn
 {
     public class ExpressionSyntaxVisitor
     {
-        public virtual ExpressionSyntax Visit(Expression node)
+        private readonly IList<NameSyntax> _namespaces = new List<NameSyntax>();
+        private readonly ITypeMapper _typeMapper;
+
+        public ExpressionSyntaxVisitor(ClassDeclarationSyntax @class = null, ITypeMapper typeMapper = null)
+        {
+            Class = @class;
+            _typeMapper = typeMapper ?? new DefaultTypeMapper();
+        }
+
+        public ClassDeclarationSyntax Class { get; private set; }
+
+        public IEnumerable<UsingDirectiveSyntax> Namespaces =>
+            _namespaces
+            .OrderBy(n => n.ToString())
+            .Select(n => UsingDirective(n));
+
+        public virtual CSharpSyntaxNode Visit(Expression node)
         {
             switch (node)
             {
+                case UnaryExpression unary:
+                    return VisitUnary(unary);
                 case BinaryExpression binary:
                     return VisitBinary(binary);
                 case ConstantExpression constant:
@@ -26,26 +43,150 @@ namespace Blondin.ExpressionTree.Roslyn
                     return VisitMethodCall(methodCall);
                 case ParameterExpression parameter:
                     return VisitParameter(parameter);
+                case LambdaExpression lambda:
+                    return VisitLambda(lambda);
+                case BlockExpression block:
+                    return VisitBlock(block);
+                case NewExpression @new:
+                    return VisitNew(@new);
+                case Expression extension when extension.NodeType == ExpressionType.Extension:
+                    return VisitExtension(extension);
                 default:
                     throw new NotSupportedException($"Expression of type {node.GetType()} is not supported.");
             }
         }
 
-        protected virtual ExpressionSyntax VisitBinary(BinaryExpression node)
+        public virtual IEnumerable<CSharpSyntaxNode> VisitNodes(IEnumerable<Expression> nodes)
         {
-            return BinaryExpression(
-                node.NodeType.ToSyntaxKind(),
-                Visit(node.Left),
-                Visit(node.Right));
+            foreach (var node in nodes)
+            {
+                yield return Visit(node);
+            }
         }
 
-        protected virtual ExpressionSyntax VisitConstant(ConstantExpression node)
+        protected virtual CSharpSyntaxNode VisitLambda(LambdaExpression lambda)
+        {
+            var parameters = from p in lambda.Parameters
+                             select Parameter(Identifier(p.Name))
+                                    .WithType(MapType(p.Type));
+            if (lambda.Name != null && Class != null && !ClosureVisitor.VisitExpression(lambda).CapturedVariables.Any())
+            {
+                var signature = lambda.Type.GetMethod("Invoke");
+                var method = MethodDeclaration(
+                    MapType(signature.ReturnType),
+                        Identifier(lambda.Name))
+                    .WithModifiers(
+                        TokenList(
+                            Token(SyntaxKind.PublicKeyword),
+                            Token(SyntaxKind.StaticKeyword)))
+                    .WithParameterList(ParameterList(SeparatedList(parameters)))
+                    .WithBody(
+                        Peel<BlockSyntax>(Visit(lambda.Body), valueReturnedExpected: signature.ReturnType != typeof(void)));
+                Class = Class.AddMembers(method);
+                return method;
+            }
+            return ObjectCreationExpression(MapType(lambda.Type))
+                .WithArgumentList(
+                    ArgumentList(
+                        SingletonSeparatedList(
+                            Argument(
+                                ParenthesizedLambdaExpression(
+                                    ParameterList(SeparatedList(parameters)),
+                                    Visit(lambda.Body))))));
+        }
+
+        protected virtual BlockSyntax VisitBlock(BlockExpression node)
+        {
+            var declarations = node.Variables.Select(v =>
+                (StatementSyntax)LocalDeclarationStatement(
+                    VariableDeclaration(MapType(node.Type))
+                    .WithVariables(
+                        SingletonSeparatedList(
+                            VariableDeclarator(
+                                Identifier(v.Name ?? throw new InvalidOperationException("Variable declared without a name.")))))));
+            var statements = VisitNodes(node.Expressions)
+                .Select((e, i) => node.Type == typeof(void) || i < node.Expressions.Count - 1 ?
+                    Peel<StatementSyntax>(e) :
+                    Peel<ReturnStatementSyntax>(e));
+            return Block(declarations.Concat(statements));
+        }
+
+        protected virtual CSharpSyntaxNode VisitUnary(UnaryExpression node)
+        {
+            return PostfixUnaryExpression(
+                node.NodeType.ToSyntaxKind(),
+                Peel<ExpressionSyntax>(Visit(node.Operand)));
+        }
+
+        protected virtual CSharpSyntaxNode VisitBinary(BinaryExpression node)
+        {
+            switch (node.NodeType)
+            {
+                case ExpressionType.Assign:
+                case ExpressionType.AddAssign:
+                case ExpressionType.AddAssignChecked:
+                case ExpressionType.AndAssign:
+                case ExpressionType.DivideAssign:
+                case ExpressionType.ExclusiveOrAssign:
+                case ExpressionType.LeftShiftAssign:
+                case ExpressionType.ModuloAssign:
+                case ExpressionType.MultiplyAssign:
+                case ExpressionType.MultiplyAssignChecked:
+                case ExpressionType.OrAssign:
+                case ExpressionType.PostDecrementAssign:
+                case ExpressionType.PostIncrementAssign:
+                case ExpressionType.PowerAssign:
+                case ExpressionType.RightShiftAssign:
+                case ExpressionType.SubtractAssign:
+                case ExpressionType.SubtractAssignChecked:
+                    return AssignmentExpression(
+                        node.NodeType.ToSyntaxKind(),
+                        Peel<ExpressionSyntax>(Visit(node.Left)),
+                        Peel<ExpressionSyntax>(Visit(node.Right)));
+                default:
+                    return BinaryExpression(
+                        node.NodeType.ToSyntaxKind(),
+                        Peel<ExpressionSyntax>(Visit(node.Left)),
+                        Peel<ExpressionSyntax>(Visit(node.Right)));
+            }
+        }
+
+        protected T Peel<T>(CSharpSyntaxNode node, bool valueReturnedExpected = false)
+            where T : CSharpSyntaxNode
+        {
+            if (node == null)
+            {
+                return null;
+            }
+            if (node is T asT)
+            {
+                return asT;
+            }
+            if (typeof(T) == typeof(StatementSyntax))
+            {
+                return (T)(object)ExpressionStatement((ExpressionSyntax)node);
+            }
+            if (typeof(T) == typeof(ReturnStatementSyntax))
+            {
+                return (T)(object)ReturnStatement((ExpressionSyntax)node);
+            }
+            if (typeof(T) == typeof(BlockSyntax))
+            {
+                return (T)(object)Block(
+                    valueReturnedExpected ?
+                    Peel<ReturnStatementSyntax>(node) :
+                    Peel<StatementSyntax>(node));
+            }
+            return node as T ?? throw new InvalidOperationException($"Node cannot be converted into a {typeof(T)}.");
+        }
+
+        protected virtual CSharpSyntaxNode VisitConstant(ConstantExpression node)
         {
             if (node.Type.IsEnum)
             {
                 return MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
-                    VisitType(node.Type),
+                    MapType(node.Type),
                     IdentifierName(Enum.GetName(node.Type, node.Value)));
             }
             switch (node.Value)
@@ -77,84 +218,61 @@ namespace Blondin.ExpressionTree.Roslyn
             }
         }
 
-        protected virtual ExpressionSyntax VisitDefault(DefaultExpression node)
+        protected virtual CSharpSyntaxNode VisitDefault(DefaultExpression node)
         {
-            return DefaultExpression(
-                VisitType(node.Type));
+            return DefaultExpression(MapType(node.Type));
         }
 
-        protected virtual ExpressionSyntax VisitMethodCall(MethodCallExpression node)
+        protected virtual CSharpSyntaxNode VisitMethodCall(MethodCallExpression node)
         {
+            var instance = node.Object == null ? MapType(node.Method.ReflectedType) : Peel<ExpressionSyntax>(Visit(node.Object));
+            var arguments = SeparatedList(
+                node.Arguments.Select(a => Argument(Peel<ExpressionSyntax>(Visit(a)))));
             return InvocationExpression(
                 MemberAccessExpression(
                     SyntaxKind.SimpleMemberAccessExpression,
-                    node.Object == null ? VisitType(node.Method.ReflectedType) : Visit(node.Object),
-                    IdentifierName(node.Method.Name)))
-                .WithArgumentList(
-                    ArgumentList(
-                        SeparatedList(
-                            node.Arguments.Select(a => Argument(Visit(a))),
-                            Enumerable.Repeat(
-                                Token(SyntaxKind.CommaToken),
-                                node.Arguments.Count - 1))));
+                        instance,
+                        IdentifierName(node.Method.Name)))
+                            .WithArgumentList(
+                                ArgumentList(arguments));
         }
 
-        static readonly Dictionary<Type, SyntaxKind> _predefinedTypes = new Dictionary<Type, SyntaxKind>
+        protected virtual CSharpSyntaxNode VisitNew(NewExpression node)
         {
-            [typeof(string)] = SyntaxKind.StringKeyword,
-            [typeof(object)] = SyntaxKind.ObjectKeyword,
-            [typeof(Enum)] = SyntaxKind.EnumKeyword,
-            [typeof(Delegate)] = SyntaxKind.DelegateKeyword,
-            [typeof(void)] = SyntaxKind.VoidKeyword,
-            [typeof(bool)] = SyntaxKind.BoolKeyword,
-            [typeof(char)] = SyntaxKind.CharKeyword,
-            [typeof(sbyte)] = SyntaxKind.SByteKeyword,
-            [typeof(byte)] = SyntaxKind.ByteKeyword,
-            [typeof(short)] = SyntaxKind.ShortKeyword,
-            [typeof(ushort)] = SyntaxKind.UShortKeyword,
-            [typeof(int)] = SyntaxKind.IntKeyword,
-            [typeof(uint)] = SyntaxKind.UIntKeyword,
-            [typeof(long)] = SyntaxKind.LongKeyword,
-            [typeof(ulong)] = SyntaxKind.ULongKeyword,
-            [typeof(decimal)] = SyntaxKind.DecimalKeyword,
-            [typeof(float)] = SyntaxKind.FloatKeyword,
-            [typeof(double)] = SyntaxKind.DoubleKeyword,
-            [typeof(string)] = SyntaxKind.StringKeyword
-        };
-        protected TypeSyntax VisitType(Type type)
-        {
-            if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>))
-            {
-                return NullableType(
-                    VisitType(type.GetGenericArguments()[0]));
-            }
-            if (type.IsPointer)
-            {
-                return PointerType(
-                    VisitType(type.GetElementType()));
-            }
-            if (_predefinedTypes.TryGetValue(type, out var kind))
-            {
-                return PredefinedType(Token(kind));
-            }
-            if (type.IsGenericType)
-            {
-                var genericArgs = type.GetGenericArguments();
-                return GenericName(type.Name.Substring(0, type.Name.IndexOf('`')))
-                    .WithTypeArgumentList(
-                        TypeArgumentList(
-                            SeparatedList(
-                                genericArgs.Select(a => VisitType(a)),
-                                Enumerable.Repeat(
-                                    Token(SyntaxKind.CommaToken),
-                                    genericArgs.Length - 1))));
-            }
-            return IdentifierName(type.Name);
+            var arguments = SeparatedList(
+                node.Arguments.Select(a => Argument(Peel<ExpressionSyntax>(Visit(a)))));
+            return ObjectCreationExpression(
+                MapType(node.Type))
+                .WithArgumentList(
+                    ArgumentList(arguments));
         }
 
         protected virtual ExpressionSyntax VisitParameter(ParameterExpression node)
         {
             return IdentifierName(node.Name);
+        }
+
+        protected virtual CSharpSyntaxNode VisitExtension(Expression node)
+        {
+            return Visit(node.Reduce());
+        }
+
+        protected TypeSyntax MapType(Type type)
+        {
+            var (result, namespaces) = _typeMapper.MapType(type);
+            AddNamespaces(namespaces);
+            return result;
+        }
+
+        private void AddNamespaces(IEnumerable<NameSyntax> namespaces)
+        {
+            foreach (var @namespace in namespaces)
+            {
+                if (!_namespaces.Any(n => n.IsEquivalentTo(@namespace)))
+                {
+                    _namespaces.Add(@namespace);
+                }
+            }
         }
     }
 }
